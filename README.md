@@ -1,6 +1,6 @@
-#arp spoofing
+# arp spoofing
 
-###Example
+### Example
 ```
 sudo ./main en0 192.168.0.1 192.168.0.100
 192.168.0.100
