@@ -104,6 +104,7 @@ int main(int argc, char * argv[]){
 		inet_pton(AF_INET, argv[(i+1)*2], &info[i].sender_ip);
 		inet_pton(AF_INET, argv[(i+1)*2+1], &info[i].target_ip);
 		get_target_mac(info[i].target_ip,info[i].target_mac);
+		get_target_mac(info[i].sender_ip,info[i].sender_mac);
 		th_arg[i].target_ip = info[i].target_ip;
 		th_arg[i].target_mac = info[i].target_mac;
 		th_arg[i].sender_ip = info[i].sender_ip;
@@ -133,11 +134,12 @@ void sniffer(u_char * arg,const struct pcap_pkthdr * pkthdr,const u_char * packe
 		sizeof(struct libnet_arp_hdr));
 
 	for(int i=0;i<job_cnt;i++){
-		if((!memcmp(ip_info->sender_ip,info[i].target_ip,4)) && 
-			(!memcmp(ip_info->target_ip,info[i].sender_ip,4))){
+		if((!memcmp(eth_hdr->ether_shost,info[i].target_mac,6)) && 
+			(!memcmp(eth_hdr->ether_dhost,my_mac,6))){
 			printf("Relaying ");
 			print_ip(info[i].target_ip);
 			memcpy(eth_hdr->ether_shost,my_mac,6);
+			memcpy(eth_hdr->ether_dhost,info[i].sender_mac,6);
 			if(pcap_sendpacket(handler,(const u_char *)packet,pkthdr->len)==-1){
 				puts("pcap_sendpacket Error!");
 				break;
