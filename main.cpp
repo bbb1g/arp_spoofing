@@ -272,7 +272,7 @@ void *send_fake_reply(
 		printf("Sent ARP reply To : ");
 		print_ip(th->target_ip);
 		putchar(10);
-		sleep(2);
+		sleep(1);
 	}
 	return 0;
 }
